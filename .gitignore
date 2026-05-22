@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment — never commit API keys
+backend/.env
+
+# Database and generated images (local state, not source)
+backend/partsvcs.db
+backend/static/images/
+
+# Frontend build output and deps
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+
+# Claude Code local memory
+.claude/
