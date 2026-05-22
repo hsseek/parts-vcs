@@ -22,7 +22,7 @@ field staff a clean mobile-friendly view to compare part versions by image.
 ### 1. Clone / copy the project
 
 ```bash
-git clone <your-repo>
+git clone https://github.com/hsseek/parts-vcs.git
 cd partsvcs
 ```
 
