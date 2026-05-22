@@ -6,23 +6,17 @@ export default function AdminHome() {
   const [parts, setParts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError] = useState(null);
   const [syncMsg, setSyncMsg] = useState(null);
 
-  // Import from Onshape state
-  const [showImport, setShowImport] = useState(false);
-  const [discovering, setDiscovering] = useState(false);
-  const [discovered, setDiscovered] = useState(null);
+  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const [fetchedParts, setFetchedParts] = useState([]);
   const [importNames, setImportNames] = useState({});
   const [importChecked, setImportChecked] = useState(new Set());
   const [importing, setImporting] = useState(false);
-
-  const [form, setForm] = useState({
-    name: "", description: "",
-    onshape_document_id: "", onshape_element_id: "",
-    onshape_element_type: "partstudio",
-  });
 
   const load = () => {
     api.listParts()
@@ -47,31 +41,47 @@ export default function AdminHome() {
     }
   };
 
-  const startDiscover = async () => {
-    setShowImport(true);
-    setDiscovered(null);
-    setDiscovering(true);
-    setError(null);
+  const openAddPanel = () => {
+    setShowAddPanel(true);
+    setUrlInput("");
+    setFetchError(null);
+    setFetchedParts([]);
+    setImportNames({});
+    setImportChecked(new Set());
+  };
+
+  const closeAddPanel = () => {
+    setShowAddPanel(false);
+    setUrlInput("");
+    setFetchError(null);
+    setFetchedParts([]);
+  };
+
+  const fetchByUrl = async () => {
+    if (!urlInput.trim()) return;
+    setFetching(true);
+    setFetchError(null);
+    setFetchedParts([]);
     try {
-      const results = await api.discoverParts();
-      setDiscovered(results);
+      const res = await api.discoverByUrl(urlInput.trim());
+      const parts = res.parts ?? [];
+      setFetchedParts(parts);
       const names = {};
       const checked = new Set();
-      results.forEach((item, i) => {
-        names[i] = item.element_name;
+      parts.forEach((p, i) => {
+        names[i] = p.suggested_name;
         checked.add(i);
       });
       setImportNames(names);
       setImportChecked(checked);
     } catch (e) {
-      setError(e.message);
-      setShowImport(false);
+      setFetchError(e.message);
     } finally {
-      setDiscovering(false);
+      setFetching(false);
     }
   };
 
-  const toggleImportCheck = (i) => {
+  const toggleCheck = (i) => {
     setImportChecked(prev => {
       const next = new Set(prev);
       next.has(i) ? next.delete(i) : next.add(i);
@@ -81,35 +91,22 @@ export default function AdminHome() {
 
   const doImport = async () => {
     const items = [...importChecked].map(i => ({
-      name: importNames[i] || discovered[i].element_name,
-      document_id: discovered[i].document_id,
-      element_id: discovered[i].element_id,
-      element_type: discovered[i].element_type,
+      name: importNames[i] || fetchedParts[i].suggested_name,
+      document_id: fetchedParts[i].document_id,
+      element_id: fetchedParts[i].element_id,
+      element_type: fetchedParts[i].element_type,
     }));
     if (!items.length) return;
     setImporting(true);
     try {
       const res = await api.importParts(items);
-      setSyncMsg(`Imported ${res.created} part(s) from Onshape.`);
-      setShowImport(false);
-      setDiscovered(null);
+      setSyncMsg(`Imported ${res.created} part(s).`);
+      closeAddPanel();
       load();
     } catch (e) {
       setError(e.message);
     } finally {
       setImporting(false);
-    }
-  };
-
-  const addPart = async () => {
-    if (!form.name || !form.onshape_document_id || !form.onshape_element_id) return;
-    try {
-      await api.createPart(form);
-      setForm({ name: "", description: "", onshape_document_id: "", onshape_element_id: "", onshape_element_type: "partstudio" });
-      setShowAddForm(false);
-      load();
-    } catch (e) {
-      setError(e.message);
     }
   };
 
@@ -123,11 +120,8 @@ export default function AdminHome() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="btn-ghost" onClick={() => setShowAddForm(s => !s)}>
-            {showAddForm ? "Cancel" : "+ Add Part"}
-          </button>
-          <button className="btn-ghost" onClick={startDiscover} disabled={discovering}>
-            {discovering ? <><span className="spinner" /> Scanning…</> : "⬇ Import from Onshape"}
+          <button className="btn-ghost" onClick={showAddPanel ? closeAddPanel : openAddPanel}>
+            {showAddPanel ? "Cancel" : "+ Add Part"}
           </button>
           <button className="btn-primary" onClick={syncAll} disabled={syncing}>
             {syncing ? <><span className="spinner" /> Syncing…</> : "↺ Sync All from Onshape"}
@@ -144,86 +138,67 @@ export default function AdminHome() {
         }}>{syncMsg}</div>
       )}
 
-      {/* Add part form */}
-      {showAddForm && (
+      {showAddPanel && (
         <div style={{
           background: "var(--surface)", border: "1px solid var(--border)",
           borderRadius: 10, padding: 24, marginBottom: 28,
         }}>
-          <h3 style={{ fontWeight: 700, marginBottom: 20, fontSize: 14, letterSpacing: "0.05em" }}>
-            NEW PART
+          <h3 style={{ fontWeight: 700, marginBottom: 16, fontSize: 14, letterSpacing: "0.05em" }}>
+            ADD PART
           </h3>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div className="field">
-              <label>Name</label>
-              <input value={form.name} onChange={e => setForm(s => ({...s, name: e.target.value}))} placeholder="Mounting Bracket v2" />
-            </div>
-            <div className="field">
-              <label>Description (optional)</label>
-              <input value={form.description} onChange={e => setForm(s => ({...s, description: e.target.value}))} placeholder="Front panel bracket" />
-            </div>
-            <div className="field">
-              <label>Onshape Document ID</label>
-              <input value={form.onshape_document_id} onChange={e => setForm(s => ({...s, onshape_document_id: e.target.value}))} placeholder="24-char ID from URL" style={{ fontFamily: "var(--font-mono)" }} />
-            </div>
-            <div className="field">
-              <label>Onshape Element ID</label>
-              <input value={form.onshape_element_id} onChange={e => setForm(s => ({...s, onshape_element_id: e.target.value}))} placeholder="24-char element ID" style={{ fontFamily: "var(--font-mono)" }} />
-            </div>
-            <div className="field">
-              <label>Element Type</label>
-              <select value={form.onshape_element_type} onChange={e => setForm(s => ({...s, onshape_element_type: e.target.value}))}>
-                <option value="partstudio">Part Studio</option>
-                <option value="assembly">Assembly</option>
-              </select>
-            </div>
-          </div>
-          <div style={{ marginTop: 8, padding: "10px 14px", background: "var(--surface2)", borderRadius: 6, fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-            Find IDs in the Onshape URL: .../documents/<b>{'<document_id>'}</b>/w/…/e/<b>{'<element_id>'}</b>
-          </div>
-          <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
-            <button className="btn-primary" onClick={addPart}>Add Part</button>
-            <button className="btn-ghost" onClick={() => setShowAddForm(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
 
-      {/* Import from Onshape panel */}
-      {showImport && (
-        <div style={{
-          background: "var(--surface)", border: "1px solid var(--border)",
-          borderRadius: 10, padding: 24, marginBottom: 28,
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h3 style={{ fontWeight: 700, fontSize: 14, letterSpacing: "0.05em" }}>
-              IMPORT FROM ONSHAPE
-            </h3>
-            <button className="btn-ghost" onClick={() => setShowImport(false)} style={{ padding: "4px 10px" }}>✕</button>
+          <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+            <input
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && fetchByUrl()}
+              placeholder="https://cad.onshape.com/documents/…"
+              style={{ flex: 1 }}
+              autoFocus
+            />
+            <button className="btn-ghost" onClick={fetchByUrl} disabled={fetching || !urlInput.trim()}>
+              {fetching ? <><span className="spinner" /> Fetching…</> : "Fetch"}
+            </button>
           </div>
 
-          {discovering && (
-            <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-              <span className="spinner" /> Scanning your Onshape documents (up to 20 recent)…
-            </div>
+          {fetchError && (
+            <div className="error-msg" style={{ marginBottom: 12 }}>{fetchError}</div>
           )}
 
-          {discovered && discovered.length === 0 && (
-            <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-              No new Part Studio or Assembly elements found. All discovered elements are already in this project.
-            </p>
-          )}
-
-          {discovered && discovered.length > 0 && (
+          {fetchedParts.length > 0 && (
             <>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
-                {discovered.length} new element(s) found. Edit names before importing.
-                Elements with 0 CalVer versions can be imported — sync them after.
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, marginTop: 8 }}>
+                {fetchedParts.length} part(s) found. Edit names before importing.{" "}
+                <button
+                  onClick={() => {
+                    if (importChecked.size === fetchedParts.length) {
+                      setImportChecked(new Set());
+                    } else {
+                      setImportChecked(new Set(fetchedParts.map((_, i) => i)));
+                    }
+                  }}
+                  style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: 12, padding: 0, textDecoration: "underline" }}
+                >
+                  {importChecked.size === fetchedParts.length ? "Deselect all" : "Select all"}
+                </button>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-                {discovered.map((item, i) => (
+
+              <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                <button
+                  className="btn-primary"
+                  onClick={doImport}
+                  disabled={importing || importChecked.size === 0}
+                >
+                  {importing ? <><span className="spinner" /> Importing…</> : `Import ${importChecked.size} Selected`}
+                </button>
+                <button className="btn-ghost" onClick={closeAddPanel}>Cancel</button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {fetchedParts.map((item, i) => (
                   <div key={i} style={{
                     display: "grid",
-                    gridTemplateColumns: "auto 1fr auto auto",
+                    gridTemplateColumns: "auto 1fr auto",
                     gap: 12, alignItems: "center",
                     padding: "10px 14px",
                     background: importChecked.has(i) ? "var(--surface2)" : "transparent",
@@ -234,11 +209,11 @@ export default function AdminHome() {
                     <input
                       type="checkbox"
                       checked={importChecked.has(i)}
-                      onChange={() => toggleImportCheck(i)}
+                      onChange={() => toggleCheck(i)}
                       style={{ width: 16, height: 16, cursor: "pointer" }}
                     />
                     <input
-                      value={importNames[i] ?? item.element_name}
+                      value={importNames[i] ?? item.suggested_name}
                       onChange={e => setImportNames(n => ({ ...n, [i]: e.target.value }))}
                       style={{ fontWeight: 600, fontSize: 14 }}
                     />
@@ -248,33 +223,24 @@ export default function AdminHome() {
                       background: "var(--surface2)", color: "var(--text-muted)",
                       whiteSpace: "nowrap",
                     }}>
-                      {item.element_type}
+                      {item.element_name}
                     </span>
-                    <div style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", whiteSpace: "nowrap" }}>
-                      <div style={{ fontFamily: "var(--font-mono)" }}>{item.document_name}</div>
-                      <div>{item.calver_count} CalVer version{item.calver_count !== 1 ? "s" : ""}</div>
-                    </div>
                   </div>
                 ))}
               </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button
-                  className="btn-primary"
-                  onClick={doImport}
-                  disabled={importing || importChecked.size === 0}
-                >
-                  {importing ? <><span className="spinner" /> Importing…</> : `Import ${importChecked.size} Selected`}
-                </button>
-                <button className="btn-ghost" onClick={() => setShowImport(false)}>Cancel</button>
-              </div>
             </>
+          )}
+
+          {!fetching && fetchedParts.length === 0 && !fetchError && (
+            <div style={{ marginTop: 12 }}>
+              <button className="btn-ghost" onClick={closeAddPanel}>Cancel</button>
+            </div>
           )}
         </div>
       )}
 
       {loading && <div style={{ color: "var(--text-muted)" }}><span className="spinner" /> Loading…</div>}
 
-      {/* Parts table */}
       {!loading && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {parts.map(part => (

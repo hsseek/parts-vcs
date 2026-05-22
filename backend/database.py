@@ -38,6 +38,14 @@ def init_db():
                 created_at  TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS version_images (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                version_id INTEGER NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+                label      TEXT NOT NULL,
+                path       TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS versions (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 part_id             INTEGER NOT NULL REFERENCES parts(id) ON DELETE CASCADE,

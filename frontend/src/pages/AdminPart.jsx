@@ -1,13 +1,77 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api/client";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
+const SLOTS = ["isometric", "front", "right", "top"];
 
-function VersionRow({ version, onRelease, onUnrelease, refreshing }) {
+function ImageCard({ src, label, onReplace, onDelete }) {
+  const [hovered, setHovered] = useState(false);
+  const isEmpty = !src;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onClick={isEmpty ? onReplace : undefined}
+        style={{
+          position: "relative", width: 80, height: 80,
+          border: isEmpty ? "1.5px dashed var(--border)" : "1px solid var(--border)",
+          borderRadius: 6, background: "var(--surface2)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          overflow: "hidden", cursor: isEmpty ? "pointer" : "default", flexShrink: 0,
+        }}
+      >
+        {src
+          ? <img src={`${BASE}${src}`} alt={label} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 4 }} />
+          : <span style={{ fontSize: 22, color: "var(--text-dim)" }}>+</span>
+        }
+        {hovered && src && (
+          <div style={{
+            position: "absolute", inset: 0, background: "rgba(0,0,0,0.65)",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5,
+          }}>
+            <button
+              onClick={e => { e.stopPropagation(); onReplace(); }}
+              style={{
+                background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)",
+                borderRadius: 4, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "var(--font-mono)",
+              }}
+            >Replace</button>
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(); }}
+              style={{
+                background: "transparent", color: "#f87171", border: "1px solid #f87171",
+                borderRadius: 4, padding: "3px 10px", fontSize: 10, cursor: "pointer", fontFamily: "var(--font-mono)",
+              }}
+            >Delete</button>
+          </div>
+        )}
+      </div>
+      <span style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--font-mono)", maxWidth: 80, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefresh, refreshing }) {
   const [notes, setNotes] = useState(version.release_notes ?? "");
   const [editingNotes, setEditingNotes] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refetching, setRefetching] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+
+  const fileInputRef = useRef(null);
+  const pendingUpload = useRef(null);
+
+  const handleRefetch = async () => {
+    setRefetching(true);
+    try { await onRefetchImages(version.id); } finally { setRefetching(false); }
+  };
 
   const saveNotes = async () => {
     setSaving(true);
@@ -16,15 +80,74 @@ function VersionRow({ version, onRelease, onUnrelease, refreshing }) {
     setEditingNotes(false);
   };
 
+  const triggerUpload = (pending) => {
+    pendingUpload.current = pending;
+    fileInputRef.current.value = "";
+    fileInputRef.current.click();
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !pendingUpload.current) return;
+    const pending = pendingUpload.current;
+    const fd = new FormData();
+    fd.append("file", file);
+    if (pending.type === "slot") {
+      fd.append("slot", pending.slot);
+    } else if (pending.type === "custom_replace") {
+      try { await api.deleteCustomImage(pending.imageId); } catch (err) { console.error("remove old custom image:", err); }
+      fd.append("label", pending.label || "");
+    } else {
+      fd.append("label", pending.label || "");
+    }
+    setUploading(true);
+    try {
+      await api.uploadVersionImage(version.id, fd);
+      onRefresh();
+    } catch (err) {
+      console.error("Upload failed:", err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteSlot = async (slot) => {
+    setUploading(true);
+    try { await api.deleteVersionSlot(version.id, slot); onRefresh(); }
+    catch (err) { console.error(err); }
+    finally { setUploading(false); }
+  };
+
+  const deleteCustom = async (imageId) => {
+    setUploading(true);
+    try { await api.deleteCustomImage(imageId); onRefresh(); }
+    catch (err) { console.error(err); }
+    finally { setUploading(false); }
+  };
+
+  const addNewImage = () => {
+    const defaultLabel = `Image ${(version.custom_images?.length ?? 0) + 1}`;
+    triggerUpload({ type: "new", label: newLabel.trim() || defaultLabel });
+    setShowAddForm(false);
+    setNewLabel("");
+  };
+
   return (
     <div style={{
       background: "var(--surface)",
       border: `1px solid ${version.is_released ? "rgba(78,222,128,0.3)" : "var(--border)"}`,
       borderRadius: 8, padding: "16px 20px",
-      display: "grid",
-      gridTemplateColumns: "1fr auto",
+      display: "grid", gridTemplateColumns: "1fr auto",
       gap: 16, alignItems: "start",
     }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
+
       <div>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
@@ -36,27 +159,86 @@ function VersionRow({ version, onRelease, onUnrelease, refreshing }) {
             ? <span className="tag tag-released">Released</span>
             : <span className="tag">Pending</span>
           }
-          {!version.images_fetched && version.is_released && (
+          {version.is_released && !version.images_fetched && (
             <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              ⏳ images fetching…
+              <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5, marginRight: 5 }} />
+              fetching images…
             </span>
           )}
+          {version.is_released && version.images_fetched && (
+            <button
+              onClick={handleRefetch}
+              disabled={refetching}
+              style={{ background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", fontSize: 11, fontFamily: "var(--font-mono)", padding: 0 }}
+            >
+              {refetching ? "re-fetching…" : "↺ re-fetch images"}
+            </button>
+          )}
+          {uploading && <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>uploading…</span>}
         </div>
 
-        {/* Thumbnail strip */}
+        {/* Images */}
         {version.is_released && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-            {["img_isometric", "img_front", "img_right", "img_top"].map(k => (
-              version[k] ? (
-                <img key={k} src={`${BASE}${version[k]}`} alt={k}
-                  style={{
-                    width: 72, height: 72, objectFit: "contain",
-                    background: "var(--surface2)", borderRadius: 4, padding: 4,
-                    border: "1px solid var(--border)",
-                  }}
+          <div style={{ marginBottom: 12 }}>
+            {/* Standard slots */}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+              {SLOTS.map(slot => (
+                <ImageCard
+                  key={slot}
+                  src={version[`img_${slot}`]}
+                  label={slot}
+                  onReplace={() => triggerUpload({ type: "slot", slot })}
+                  onDelete={() => deleteSlot(slot)}
                 />
-              ) : null
-            ))}
+              ))}
+            </div>
+
+            {/* Custom images */}
+            {version.custom_images?.length > 0 && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+                {version.custom_images.map(img => (
+                  <ImageCard
+                    key={img.id}
+                    src={img.path}
+                    label={img.label}
+                    onReplace={() => triggerUpload({ type: "custom_replace", imageId: img.id, label: img.label })}
+                    onDelete={() => deleteCustom(img.id)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Add image */}
+            {showAddForm ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                <input
+                  value={newLabel}
+                  onChange={e => setNewLabel(e.target.value)}
+                  placeholder={`Image ${(version.custom_images?.length ?? 0) + 1}`}
+                  style={{ width: 160, fontSize: 12, padding: "5px 8px" }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") addNewImage();
+                    if (e.key === "Escape") { setShowAddForm(false); setNewLabel(""); }
+                  }}
+                  autoFocus
+                />
+                <button className="btn-primary" onClick={addNewImage} style={{ fontSize: 12, padding: "5px 12px" }}>
+                  Choose file
+                </button>
+                <button className="btn-ghost" onClick={() => { setShowAddForm(false); setNewLabel(""); }} style={{ fontSize: 12, padding: "5px 12px" }}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                className="btn-ghost"
+                onClick={() => setShowAddForm(true)}
+                disabled={uploading}
+                style={{ fontSize: 11, padding: "4px 10px", marginTop: 2 }}
+              >
+                + Add image
+              </button>
+            )}
           </div>
         )}
 
@@ -83,8 +265,7 @@ function VersionRow({ version, onRelease, onUnrelease, refreshing }) {
                 fontSize: 13, color: notes ? "var(--text-muted)" : "var(--text-dim)",
                 cursor: "pointer", fontStyle: notes ? "normal" : "italic",
                 padding: "6px 10px", borderRadius: 4,
-                border: "1px solid transparent",
-                transition: "border-color 0.15s",
+                border: "1px solid transparent", transition: "border-color 0.15s",
               }}
               onMouseEnter={e => e.currentTarget.style.borderColor = "var(--border)"}
               onMouseLeave={e => e.currentTarget.style.borderColor = "transparent"}
@@ -104,19 +285,11 @@ function VersionRow({ version, onRelease, onUnrelease, refreshing }) {
       {/* Actions */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 120, alignItems: "flex-end" }}>
         {!version.is_released ? (
-          <button
-            className="btn-primary"
-            onClick={() => onRelease(version.id, notes)}
-            disabled={refreshing}
-          >
+          <button className="btn-primary" onClick={() => onRelease(version.id, notes)} disabled={refreshing}>
             ✓ Mark Released
           </button>
         ) : (
-          <button
-            className="btn-danger"
-            onClick={() => onUnrelease(version.id)}
-            disabled={refreshing}
-          >
+          <button className="btn-danger" onClick={() => onUnrelease(version.id)} disabled={refreshing}>
             Unrelease
           </button>
         )}
@@ -133,8 +306,11 @@ export default function AdminPart() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
   const [syncMsg, setSyncMsg] = useState(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [p, v] = await Promise.all([api.getPart(id), api.listVersions(id, false)]);
       setPart(p); setVersions(v);
@@ -143,9 +319,17 @@ export default function AdminPart() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
-  useEffect(() => { load(); }, [id]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const pending = versions.some(v => v.is_released && !v.images_fetched);
+    if (!pending) return;
+    const timer = setInterval(load, 4000);
+    return () => clearInterval(timer);
+  }, [versions, load]);
 
   const sync = async () => {
     setSyncing(true); setSyncMsg(null);
@@ -160,15 +344,23 @@ export default function AdminPart() {
     }
   };
 
-  const onRelease = async (versionId) => {
-    await api.releasePart(versionId);
-    await load();
+  const saveName = async () => {
+    if (!nameValue.trim()) return;
+    setSavingName(true);
+    try {
+      await api.updatePart(id, { name: nameValue.trim() });
+      await load();
+      setEditingName(false);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingName(false);
+    }
   };
 
-  const onUnrelease = async (versionId) => {
-    await api.unrelease(versionId);
-    await load();
-  };
+  const onRelease = async (versionId) => { await api.releasePart(versionId); await load(); };
+  const onUnrelease = async (versionId) => { await api.unrelease(versionId); await load(); };
+  const onRefetchImages = async (versionId) => { await api.refetchImages(versionId); await load(); };
 
   if (loading) return <div style={{ padding: 40, color: "var(--text-muted)" }}><span className="spinner" /> Loading…</div>;
   if (error) return <div style={{ padding: 40 }}><div className="error-msg">{error}</div></div>;
@@ -187,9 +379,39 @@ export default function AdminPart() {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 4 }}>{part.name}</h1>
-          {part.description && <p style={{ color: "var(--text-muted)", fontSize: 13 }}>{part.description}</p>}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {editingName ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                value={nameValue}
+                onChange={e => setNameValue(e.target.value)}
+                style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", padding: "4px 8px", minWidth: 240 }}
+                onKeyDown={e => { if (e.key === "Enter") saveName(); if (e.key === "Escape") setEditingName(false); }}
+                autoFocus
+              />
+              <button className="btn-primary" onClick={saveName} disabled={savingName} style={{ padding: "6px 14px" }}>
+                {savingName ? "…" : "Save"}
+              </button>
+              <button className="btn-ghost" onClick={() => setEditingName(false)} style={{ padding: "6px 14px" }}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <h1
+              onClick={() => { setNameValue(part.name); setEditingName(true); }}
+              title="Click to rename"
+              style={{
+                fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 4,
+                cursor: "pointer", display: "inline-block",
+                borderBottom: "1px dashed transparent", transition: "border-color 0.15s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderBottomColor = "var(--border)"}
+              onMouseLeave={e => e.currentTarget.style.borderBottomColor = "transparent"}
+            >{part.name}</h1>
+          )}
+          {part.description && !editingName && (
+            <p style={{ color: "var(--text-muted)", fontSize: 13 }}>{part.description}</p>
+          )}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Link to={`/part/${id}`} className="btn-ghost" style={{ display: "inline-flex", alignItems: "center", padding: "8px 16px" }}>
@@ -209,12 +431,10 @@ export default function AdminPart() {
         }}>{syncMsg}</div>
       )}
 
-      {/* Onshape info */}
       <div style={{
         background: "var(--surface2)", border: "1px solid var(--border)",
         borderRadius: 6, padding: "10px 14px", marginBottom: 28,
-        fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)",
-        wordBreak: "break-all",
+        fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", wordBreak: "break-all",
       }}>
         doc: {part.onshape_document_id} · element: {part.onshape_element_id} · type: {part.onshape_element_type}
       </div>
@@ -232,7 +452,10 @@ export default function AdminPart() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {pending.map(v => (
-              <VersionRow key={v.id} version={v} onRelease={onRelease} onUnrelease={onUnrelease} />
+              <VersionRow key={v.id} version={v}
+                onRelease={onRelease} onUnrelease={onUnrelease}
+                onRefetchImages={onRefetchImages} onRefresh={load}
+              />
             ))}
           </div>
         </div>
@@ -270,7 +493,10 @@ export default function AdminPart() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {released.map(v => (
-              <VersionRow key={v.id} version={v} onRelease={onRelease} onUnrelease={onUnrelease} />
+              <VersionRow key={v.id} version={v}
+                onRelease={onRelease} onUnrelease={onUnrelease}
+                onRefetchImages={onRefetchImages} onRefresh={load}
+              />
             ))}
           </div>
         </div>

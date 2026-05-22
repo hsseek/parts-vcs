@@ -23,7 +23,25 @@ def list_versions_for_part(part_id: int, released_only: bool = False):
         query += " ORDER BY released_at DESC NULLS LAST, created_at DESC"
 
         rows = conn.execute(query, args).fetchall()
-        return [dict(r) for r in rows]
+        versions = [dict(r) for r in rows]
+
+        if versions:
+            placeholders = ",".join("?" * len(versions))
+            ids = [v["id"] for v in versions]
+            img_rows = conn.execute(
+                f"SELECT * FROM version_images WHERE version_id IN ({placeholders}) ORDER BY created_at",
+                ids,
+            ).fetchall()
+            imgs_by_version: dict[int, list] = {}
+            for img in img_rows:
+                imgs_by_version.setdefault(img["version_id"], []).append(dict(img))
+            for v in versions:
+                v["custom_images"] = imgs_by_version.get(v["id"], [])
+        else:
+            for v in versions:
+                v["custom_images"] = []
+
+        return versions
 
 
 @router.post("/{version_id}/release")

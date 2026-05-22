@@ -34,16 +34,15 @@ def _nonce(length=25):
 def _auth_headers(method: str, path: str, query: str = "", content_type: str = "application/json"):
     nonce = _nonce()
     date = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
-    path_lower = path.lower()
-    query_lower = query.lower()
 
+    # Entire string must be lowercase before hashing (Onshape API key auth spec)
     hmac_str = "\n".join([
         method.lower(),
-        nonce,
-        date,
+        nonce.lower(),
+        date.lower(),
         content_type.lower(),
-        path_lower,
-        query_lower,
+        path.lower(),
+        query.lower(),
         "",
     ])
 
@@ -101,13 +100,38 @@ def list_documents(limit: int = 20) -> list[dict]:
         return []
 
 
-def list_elements(did: str) -> list[dict]:
-    """Return all elements in a document."""
+def get_document(did: str) -> dict:
+    """Return document metadata (name, id, etc.)."""
     try:
-        data = _get(f"/api/v6/documents/{did}/elements")
+        data = _get(f"/api/v6/documents/{did}")
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"[onshape] get_document error {did}: {e}")
+        return {}
+
+
+def list_elements(did: str, wid: str | None = None) -> list[dict] | None:
+    """Return all elements in a document, or None on error."""
+    path = (
+        f"/api/v6/documents/{did}/w/{wid}/elements"
+        if wid
+        else f"/api/v6/documents/{did}/elements"
+    )
+    try:
+        data = _get(path)
         return data if isinstance(data, list) else []
     except Exception as e:
         print(f"[onshape] list_elements error {did}: {e}")
+        return None
+
+
+def list_parts_in_element(did: str, wid: str, eid: str) -> list[dict]:
+    """Return all parts within a Part Studio element."""
+    try:
+        data = _get(f"/api/v6/parts/d/{did}/w/{wid}/e/{eid}")
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"[onshape] list_parts_in_element error {did}/{wid}/{eid}: {e}")
         return []
 
 
@@ -122,24 +146,32 @@ def list_calver_versions(did: str) -> list[dict]:
     return [v for v in list_versions(did) if CALVER_RE.match(v.get("name", ""))]
 
 
+def _parse_thumb_size(size_str) -> int:
+    """Parse Onshape thumbnail size field which may be 'WxH' or an int."""
+    try:
+        parts = str(size_str).lower().split("x")
+        return max(int(p) for p in parts)
+    except (ValueError, AttributeError):
+        return 0
+
+
 def get_thumbnail_for_version(did: str, vid: str, size: int = 300) -> bytes | None:
     """Fetch thumbnail image bytes for a specific document version."""
     try:
         data = _get(f"/api/v6/thumbnails/d/{did}/v/{vid}")
-        # Find the closest size href
         sizes = data.get("sizes", [])
         if not sizes:
             return None
-        # Pick closest to requested size
-        best = min(sizes, key=lambda s: abs(s.get("size", 0) - size))
+        best = min(sizes, key=lambda s: abs(_parse_thumb_size(s.get("size", 0)) - size))
         href = best.get("href", "")
         if not href:
             return None
-        # href is a full URL; strip base and re-auth
         parsed = urlparse(href)
         path = parsed.path
         query = parsed.query
+        # Thumbnail endpoint returns an image — override Accept header
         headers = _auth_headers("GET", path, query)
+        headers["Accept"] = "image/png, image/*, */*"
         with httpx.Client(timeout=30) as client:
             r = client.get(href, headers=headers)
             r.raise_for_status()
@@ -151,21 +183,17 @@ def get_thumbnail_for_version(did: str, vid: str, size: int = 300) -> bytes | No
 
 def get_shaded_view(
     did: str,
-    vid: str,
+    wid: str,
     eid: str,
-    element_type: str,  # "partstudio" or "assemblies"
+    element_type: str,  # "partstudio" or "assembly"
     view_matrix: list[float],
     output_height: int = 500,
     output_width: int = 500,
 ) -> bytes | None:
     """
-    Fetch a shaded view image for a specific orientation.
+    Fetch a shaded view image using workspace context (w/ instead of v/).
+    Version-based rendering returns blank images for many Part Studios.
     view_matrix: 12-element list (rotation 3x3 + translation 3x1, row-major).
-    Standard views:
-      isometric: [0.7071,-0.7071,0, 0.4082,0.4082,-0.8165, 0.5774,0.5774,0.5774, 0,0,0]
-      front:     [1,0,0, 0,1,0, 0,0,1, 0,0,0]
-      right:     [0,0,-1, 0,1,0, 1,0,0, 0,0,0]
-      top:       [1,0,0, 0,0,1, 0,-1,0, 0,0,0]
     """
     endpoint_map = {
         "partstudio": "partstudios",
@@ -173,7 +201,7 @@ def get_shaded_view(
     }
     ep = endpoint_map.get(element_type, "partstudios")
 
-    path = f"/api/v6/{ep}/d/{did}/v/{vid}/e/{eid}/shadedviews"
+    path = f"/api/v6/{ep}/d/{did}/w/{wid}/e/{eid}/shadedviews"
     params = {
         "outputHeight": output_height,
         "outputWidth": output_width,
@@ -185,10 +213,14 @@ def get_shaded_view(
         data = _get(path, params)
         if isinstance(data, dict) and "images" in data:
             img_b64 = data["images"][0]
-            return base64.b64decode(img_b64)
+            img = base64.b64decode(img_b64)
+            # Reject blank/transparent images — real renders are significantly larger
+            if len(img) < 2000:
+                return None
+            return img
         return None
     except Exception as e:
-        print(f"[onshape] shaded view error for {did}/{vid}/{eid}: {e}")
+        print(f"[onshape] shaded view error for {did}/{wid}/{eid}: {e}")
         return None
 
 

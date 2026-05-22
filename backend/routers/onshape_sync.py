@@ -2,6 +2,7 @@
 Sync router: pull CalVer versions from Onshape and fetch images.
 """
 
+import re
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -27,14 +28,19 @@ def fetch_images_for_version(version_db_id: int, did: str, vid: str, eid: str, e
     """Background task: fetch all 4 shaded views and thumbnail, save, update DB."""
     images = {}
 
-    # Try shaded views (4 angles)
-    for view_name, matrix in oc.VIEW_MATRICES.items():
-        img = oc.get_shaded_view(did, vid, eid, element_type, matrix)
-        if img:
-            images[f"img_{view_name}"] = _save_image(img, f"{version_db_id}_{view_name}")
+    # Resolve the default workspace ID — shaded views work in workspace context,
+    # not version context (version-based rendering returns blank images).
+    doc = oc.get_document(did)
+    wid = doc.get("defaultWorkspace", {}).get("id", "")
 
-    # Fallback: thumbnail for isometric if shaded view failed
-    if "img_isometric" not in images:
+    if wid:
+        for view_name, matrix in oc.VIEW_MATRICES.items():
+            img = oc.get_shaded_view(did, wid, eid, element_type, matrix)
+            if img:
+                images[f"img_{view_name}"] = _save_image(img, f"{version_db_id}_{view_name}")
+
+    # Fallback: thumbnail when shaded views are all blank or workspace unavailable
+    if not images:
         thumb = oc.get_thumbnail_for_version(did, vid)
         if thumb:
             images["img_isometric"] = _save_image(thumb, f"{version_db_id}_thumb")
@@ -121,6 +127,49 @@ async def fetch_images(version_id: int, background_tasks: BackgroundTasks):
     return {"ok": True, "message": "Image fetching started in background"}
 
 
+@router.get("/discover-by-url")
+def discover_by_url(url: str):
+    """
+    Given an Onshape document URL, return all individual parts from every
+    Part Studio element in that document, with suggested names.
+    """
+    match = re.search(r"/documents/([a-f0-9]+)/w/([a-f0-9]+)", url)
+    if not match:
+        raise HTTPException(
+            400,
+            "Invalid Onshape URL. Expected: .../documents/{did}/w/{wid}/...",
+        )
+    did, wid = match.group(1), match.group(2)
+
+    doc = oc.get_document(did)
+    doc_name = doc.get("name", did)
+
+    elements = oc.list_elements(did)
+    if elements is None:
+        raise HTTPException(403, "Could not access document elements. Check that your Onshape API key has access to this document.")
+
+    results = []
+    for el in elements:
+        if el.get("elementType") != "PARTSTUDIO":
+            continue
+        eid = el.get("id", "")
+        element_name = el.get("name", eid)
+        parts = oc.list_parts_in_element(did, wid, eid)
+        for part in parts:
+            part_name = part.get("name", "")
+            results.append({
+                "document_id": did,
+                "document_name": doc_name,
+                "element_id": eid,
+                "element_name": element_name,
+                "element_type": "partstudio",
+                "part_name": part_name,
+                "suggested_name": f"{doc_name}-{element_name}-{part_name}",
+            })
+
+    return {"document_name": doc_name, "parts": results}
+
+
 @router.get("/discover")
 def discover_parts():
     """
@@ -146,6 +195,8 @@ def discover_parts():
             elements = oc.list_elements(did)
             calver = oc.list_calver_versions(did)
         except Exception:
+            continue
+        if elements is None:
             continue
 
         calver_count = len(calver)
