@@ -33,6 +33,7 @@ function Nav() {
 
 function AdminLogin({ onAuthed }) {
   const [pass, setPass] = useState("");
+  const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -57,21 +58,34 @@ function AdminLogin({ onAuthed }) {
       minHeight: "60vh",
     }}>
       <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12, width: 260 }}>
-        <input
-          type="password"
-          value={pass}
-          onChange={e => setPass(e.target.value)}
-          placeholder="••••••••"
-          autoFocus
-          style={{ fontSize: 16, letterSpacing: "0.2em", textAlign: "center" }}
-        />
+        <div style={{ position: "relative" }}>
+          <input
+            type={show ? "text" : "password"}
+            value={pass}
+            onChange={e => setPass(e.target.value)}
+            placeholder="••••••••"
+            autoFocus
+            style={{ fontSize: 16, letterSpacing: show ? "normal" : "0.2em", textAlign: "center", width: "100%", paddingRight: 40 }}
+          />
+          <button
+            type="button"
+            onClick={() => setShow(s => !s)}
+            style={{
+              position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+              background: "none", border: "none", cursor: "pointer",
+              color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)", padding: 0,
+            }}
+          >
+            {show ? "hide" : "show"}
+          </button>
+        </div>
         {error && (
           <div style={{ fontSize: 12, color: "#f87171", textAlign: "center", fontFamily: "var(--font-mono)" }}>
             {error}
           </div>
         )}
         <button className="btn-primary" type="submit" disabled={loading || !pass}>
-          {loading ? <span className="spinner" /> : "→"}
+          {loading ? <span className="spinner" /> : "Log in"}
         </button>
       </form>
     </div>

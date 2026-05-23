@@ -4,6 +4,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent / ".env")
 
 from database import init_db
 from routers import parts, versions, admin, onshape_sync, auth_router
