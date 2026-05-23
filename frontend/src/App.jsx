@@ -16,13 +16,7 @@ function Nav() {
       background: "var(--bg)",
       position: "sticky", top: 0, zIndex: 100,
     }}>
-      <Link to="/" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{
-          fontFamily: "var(--font-mono)", fontWeight: 700,
-          fontSize: 13, letterSpacing: "0.12em",
-          background: "var(--accent)", color: "#0f0f0f",
-          padding: "2px 8px", borderRadius: 3,
-        }}>VCS</span>
+      <Link to="/" style={{ display: "flex", alignItems: "center" }}>
         <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "0.04em" }}>
           PartVCS
         </span>

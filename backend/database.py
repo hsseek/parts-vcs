@@ -43,6 +43,7 @@ def init_db():
                 version_id INTEGER NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
                 label      TEXT NOT NULL,
                 path       TEXT NOT NULL,
+                caption    TEXT,
                 created_at TEXT DEFAULT (datetime('now'))
             );
 
@@ -57,9 +58,30 @@ def init_db():
                 img_front           TEXT,
                 img_right           TEXT,
                 img_top             TEXT,
+                img_isometric_caption TEXT,
+                img_front_caption     TEXT,
+                img_right_caption     TEXT,
+                img_top_caption       TEXT,
                 images_fetched      INTEGER NOT NULL DEFAULT 0,
                 created_at          TEXT DEFAULT (datetime('now')),
                 released_at         TEXT,
                 UNIQUE(part_id, onshape_version_id)
             );
         """)
+
+
+def migrate_db():
+    """Add columns introduced after the initial schema (idempotent)."""
+    migrations = [
+        "ALTER TABLE version_images ADD COLUMN caption TEXT",
+        "ALTER TABLE versions ADD COLUMN img_isometric_caption TEXT",
+        "ALTER TABLE versions ADD COLUMN img_front_caption TEXT",
+        "ALTER TABLE versions ADD COLUMN img_right_caption TEXT",
+        "ALTER TABLE versions ADD COLUMN img_top_caption TEXT",
+    ]
+    with get_db() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(sql)
+            except Exception:
+                pass

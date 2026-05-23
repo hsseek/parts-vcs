@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api/client";
 
@@ -10,6 +10,60 @@ const VIEW_LABELS = {
   img_isometric: "Preview",
 };
 
+function useImageTransparency(fullSrc) {
+  const [transparent, setTransparent] = useState(true);
+  useEffect(() => {
+    if (!fullSrc) return;
+    const img = new window.Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        const w = img.naturalWidth, h = img.naturalHeight;
+        const samples = [
+          [0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1],
+          [Math.floor(w / 2), 0], [Math.floor(w / 2), h - 1],
+          [0, Math.floor(h / 2)], [w - 1, Math.floor(h / 2)],
+        ];
+        const found = samples.some(([x, y]) => ctx.getImageData(x, y, 1, 1).data[3] < 250);
+        setTransparent(found);
+      } catch { setTransparent(true); }
+    };
+    img.onerror = () => setTransparent(true);
+    img.src = fullSrc;
+  }, [fullSrc]);
+  return transparent;
+}
+
+function ActiveImage({ src, label }) {
+  const fullSrc = `${BASE}${src}`;
+  const transparent = useImageTransparency(fullSrc);
+  return (
+    <div style={{
+      borderRadius: 8,
+      height: 280,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      overflow: "hidden", marginBottom: 10,
+      background: "transparent",
+    }}>
+      <img
+        src={fullSrc}
+        alt={label}
+        style={{
+          maxWidth: "100%", maxHeight: "100%", objectFit: "contain",
+          padding: transparent ? 12 : 0,
+          border: transparent ? "none" : "1px solid var(--border)",
+          borderRadius: transparent ? 0 : 6,
+        }}
+      />
+    </div>
+  );
+}
+
 function ImageGrid({ version }) {
   const stdViews = Object.entries(VIEW_LABELS)
     .filter(([k]) => version[k])
@@ -17,9 +71,23 @@ function ImageGrid({ version }) {
   const customViews = (version.custom_images ?? [])
     .map(img => ({ key: `ci_${img.id}`, src: img.path, label: img.label, caption: img.caption ?? null }));
   const views = [...stdViews, ...customViews];
-  const [activeKey, setActiveKey] = useState(views[0]?.key ?? null);
+  const [activeIdx, setActiveIdx] = useState(0);
 
-  const active = views.find(v => v.key === activeKey) ?? views[0] ?? null;
+  const clampedIdx = Math.min(activeIdx, Math.max(0, views.length - 1));
+  const active = views[clampedIdx] ?? null;
+
+  const prev = useCallback(() => setActiveIdx(i => Math.max(0, i - 1)), []);
+  const next = useCallback(() => setActiveIdx(i => Math.min(views.length - 1, i + 1)), [views.length]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.key === "ArrowLeft" || e.key === "h") prev();
+      if (e.key === "ArrowRight" || e.key === "l") next();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prev, next]);
 
   if (views.length === 0) {
     return (
@@ -41,17 +109,48 @@ function ImageGrid({ version }) {
 
   return (
     <div>
-      {/* Main image */}
-      <div style={{
-        background: "var(--surface2)", borderRadius: 8,
-        height: 280, display: "flex", alignItems: "center", justifyContent: "center",
-        overflow: "hidden", marginBottom: 10,
-      }}>
-        <img
-          src={`${BASE}${active.src}`}
-          alt={active.label}
-          style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", padding: 12 }}
-        />
+      {/* Main image with side nav areas */}
+      <div style={{ position: "relative" }}>
+        <ActiveImage src={active.src} label={active.label} />
+
+        {views.length > 1 && (
+          <>
+            <button
+              onClick={prev}
+              disabled={clampedIdx === 0}
+              style={{
+                position: "absolute", left: 0, top: 0, bottom: 10,
+                width: 44, background: "transparent", border: "none",
+                cursor: clampedIdx === 0 ? "default" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                opacity: clampedIdx === 0 ? 0 : 0.35,
+                transition: "opacity 0.15s",
+                borderRadius: "8px 0 0 8px",
+              }}
+              onMouseEnter={e => { if (clampedIdx > 0) e.currentTarget.style.opacity = "0.85"; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = clampedIdx === 0 ? "0" : "0.35"; }}
+            >
+              <span style={{ fontSize: 20, color: "var(--text)", lineHeight: 1 }}>‹</span>
+            </button>
+            <button
+              onClick={next}
+              disabled={clampedIdx === views.length - 1}
+              style={{
+                position: "absolute", right: 0, top: 0, bottom: 10,
+                width: 44, background: "transparent", border: "none",
+                cursor: clampedIdx === views.length - 1 ? "default" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                opacity: clampedIdx === views.length - 1 ? 0 : 0.35,
+                transition: "opacity 0.15s",
+                borderRadius: "0 8px 8px 0",
+              }}
+              onMouseEnter={e => { if (clampedIdx < views.length - 1) e.currentTarget.style.opacity = "0.85"; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = clampedIdx === views.length - 1 ? "0" : "0.35"; }}
+            >
+              <span style={{ fontSize: 20, color: "var(--text)", lineHeight: 1 }}>›</span>
+            </button>
+          </>
+        )}
       </div>
 
       {active?.caption && (
@@ -67,16 +166,16 @@ function ImageGrid({ version }) {
       {/* View tabs */}
       {views.length > 1 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {views.map(v => (
+          {views.map((v, i) => (
             <button
               key={v.key}
-              onClick={() => setActiveKey(v.key)}
+              onClick={() => setActiveIdx(i)}
               style={{
                 padding: "4px 12px", fontSize: 11, fontWeight: 700,
                 letterSpacing: "0.06em", textTransform: "uppercase",
-                background: activeKey === v.key ? "var(--accent)" : "var(--surface2)",
-                color: activeKey === v.key ? "#0f0f0f" : "var(--text-muted)",
-                border: `1px solid ${activeKey === v.key ? "var(--accent)" : "var(--border)"}`,
+                background: clampedIdx === i ? "var(--accent)" : "var(--surface2)",
+                color: clampedIdx === i ? "#0f0f0f" : "var(--text-muted)",
+                border: `1px solid ${clampedIdx === i ? "var(--accent)" : "var(--border)"}`,
                 borderRadius: 4,
               }}
             >

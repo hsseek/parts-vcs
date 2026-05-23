@@ -30,7 +30,7 @@ cd parts-vcs
 
 ```bash
 cd backend
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 ### 3. Install frontend dependencies
@@ -40,15 +40,29 @@ cd frontend
 npm install
 ```
 
-### 4. Configure Onshape API credentials
-
-Get your API keys from: **Onshape → Account Settings → API Keys → Create New API Key**
+### 4. Configure environment
 
 ```bash
 cp backend/.env.example backend/.env
-# Edit backend/.env with your keys:
-#   ONSHAPE_ACCESS_KEY=...
-#   ONSHAPE_SECRET_KEY=...
+```
+
+Edit `backend/.env`:
+
+```
+# Onshape API keys — Onshape → Account Settings → API Keys → Create New API Key
+ONSHAPE_ACCESS_KEY=...
+ONSHAPE_SECRET_KEY=...
+
+# Admin login
+ADMIN_PASSPHRASE=your_passphrase
+ADMIN_SESSION_SECRET=some_long_random_string
+
+# Email notifications for Onshape access requests (optional)
+ADMIN_EMAIL=admin@example.com
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
 ```
 
 ### 5. Run (development)
@@ -76,13 +90,9 @@ Point a reverse proxy (nginx, Caddy) at port 8000 for HTTPS.
 
 ### Adding a part
 
-1. Go to **Admin** tab → **+ Add Part**
-2. Fill in the part name and the Onshape IDs from the document URL:
-   ```
-   https://cad.onshape.com/documents/<DOCUMENT_ID>/w/.../e/<ELEMENT_ID>
-   ```
-3. Choose element type: **Part Studio** or **Assembly**
-4. Click **Add Part**
+1. Go to **Admin** (enter your passphrase) → **+ Add Part**
+2. Paste an Onshape document URL — the app discovers all parts in the document automatically
+3. Select the parts you want to track and click **Import Selected**
 
 ### Detecting new versions
 
@@ -97,26 +107,34 @@ After naming a version like `26.05.0` in Onshape:
 ### Releasing a version
 
 1. In the Pending list, click **✓ Mark Released**
-2. Images are fetched from Onshape in the background (takes ~10–30 seconds)
-3. Optionally add release notes (click the note area to edit inline)
+2. The Onshape document thumbnail is fetched in the background (takes ~10–30 seconds)
+3. Optionally add release notes inline
+4. Upload additional images by dragging a file, clicking **+ Add image**, or pressing **Ctrl+V** to paste from clipboard
 
 The version is now visible to field staff.
 
 ### Staff view
 
 Field staff open the app URL on their phone, pick a part, and see:
-- The **current approved version** prominently at top with 4 views
-  (isometric, front, right, top)
+
+- The **current approved version** prominently at the top with its image
 - Full **version history** below for comparison
-- No login required
+- Navigate images with **arrow keys**, **h / l**, or by clicking the left/right edges of the image
+- A **Request permission** link on each version to ask the document owner for Onshape access — no login required
+
+---
+
+## Admin authentication
+
+The admin area is protected by a passphrase set in `.env` as `ADMIN_PASSPHRASE`. Navigate to `/admin` and enter the passphrase to access it. Sessions are signed with `ADMIN_SESSION_SECRET` — rotate this value to invalidate all active sessions.
 
 ---
 
 ## Version naming
 
-The system auto-detects versions matching this regex: `^\d{2}\.\d{2}(\.\d+)?$`
+The system auto-detects versions matching this pattern: `^\d{2}\.\d{2}(\.\d+)?$`
 
-Examples of detected names: `26.05`, `26.05.0`, `26.05.1`, `25.11`
+Examples of detected names: `26.05`, `26.05.0`, `26.05.1`, `25.11`  
 Examples of ignored names: `Add clearance`, `Decrease spring force`, `v2`, `Draft`
 
 ---
@@ -143,16 +161,19 @@ Examples of ignored names: `Add clearance`, `Decrease spring force`, `v2`, `Draf
 ## Project structure
 
 ```
-partsvcs/
+parts-vcs/
 ├── backend/
 │   ├── main.py              # FastAPI app
 │   ├── database.py          # SQLite setup
-│   ├── onshape_client.py    # Onshape API (thumbnails, shaded views)
+│   ├── onshape_client.py    # Onshape API (HMAC auth, thumbnails, part discovery)
+│   ├── auth.py              # Passphrase-based session auth
 │   ├── routers/
 │   │   ├── parts.py         # CRUD for parts
 │   │   ├── versions.py      # Version queries
-│   │   ├── admin.py         # Release / unrelease
-│   │   └── onshape_sync.py  # CalVer detection + image fetching
+│   │   ├── admin.py         # Release / unrelease, image management
+│   │   ├── onshape_sync.py  # CalVer detection, document discovery, image fetching
+│   │   ├── auth_router.py   # Login / logout endpoints
+│   │   └── request_access.py# Onshape access request email
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
@@ -160,7 +181,7 @@ partsvcs/
 │       ├── pages/
 │       │   ├── StaffHome.jsx   # Part list (field staff)
 │       │   ├── PartView.jsx    # Version comparison (field staff)
-│       │   ├── AdminHome.jsx   # Admin part list
+│       │   ├── AdminHome.jsx   # Admin part list + Onshape API status
 │       │   └── AdminPart.jsx   # Admin version management
 │       └── api/client.js       # API wrapper
 ├── dev.sh      # Start both servers for development
