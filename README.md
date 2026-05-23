@@ -23,7 +23,7 @@ field staff a clean mobile-friendly view to compare part versions by image.
 
 ```bash
 git clone https://github.com/hsseek/parts-vcs.git
-cd partsvcs
+cd parts-vcs
 ```
 
 ### 2. Install backend dependencies
