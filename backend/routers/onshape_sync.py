@@ -5,12 +5,13 @@ Sync router: pull CalVer versions from Onshape and fetch images.
 import re
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 from database import get_db
 import onshape_client as oc
+from auth import require_admin
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 IMAGE_DIR = Path("static/images")
 

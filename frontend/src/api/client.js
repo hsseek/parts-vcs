@@ -1,23 +1,52 @@
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
+function adminToken() {
+  return localStorage.getItem("admin_token");
+}
+
+function adminHeaders(extra = {}) {
+  const token = adminToken();
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
+}
+
 async function req(method, path, body) {
+  const isAdmin = path.startsWith("/api/admin") || path.startsWith("/api/sync");
+  const headers = isAdmin ? adminHeaders() : {};
+  if (body) headers["Content-Type"] = "application/json";
+
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401 && isAdmin) {
+    localStorage.removeItem("admin_token");
+    window.dispatchEvent(new Event("admin-session-expired"));
+  }
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`);
   if (res.status === 204) return null;
   return res.json();
 }
 
 async function upload(path, formData) {
-  const res = await fetch(`${BASE}${path}`, { method: "POST", body: formData });
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: adminHeaders(),
+    body: formData,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem("admin_token");
+    window.dispatchEvent(new Event("admin-session-expired"));
+  }
   if (!res.ok) throw new Error(`POST ${path} → ${res.status}`);
   return res.json();
 }
 
 export const api = {
+  // Auth
+  login: (passphrase) => req("POST", "/api/auth/login", { passphrase }),
+  checkAuth: () => req("GET", "/api/auth/check"),
+
   // Parts
   listParts: () => req("GET", "/api/parts"),
   getPart: (id) => req("GET", `/api/parts/${id}`),

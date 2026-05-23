@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from database import init_db
-from routers import parts, versions, admin, onshape_sync
+from routers import parts, versions, admin, onshape_sync, auth_router
 
 app = FastAPI(title="PartVCS", version="1.0.0")
 
@@ -24,6 +24,7 @@ Path("static/images").mkdir(parents=True, exist_ok=True)
 async def startup():
     init_db()
 
+app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(parts.router, prefix="/api/parts", tags=["parts"])
 app.include_router(versions.router, prefix="/api/versions", tags=["versions"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])

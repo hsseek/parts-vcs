@@ -3,10 +3,11 @@ Admin convenience endpoints combining release + image fetch.
 """
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form, Depends
 from pydantic import BaseModel
 from database import get_db
 from routers.onshape_sync import fetch_images_for_version, IMAGE_DIR
+from auth import require_admin
 
 VALID_SLOTS = {"isometric", "front", "right", "top"}
 
@@ -16,7 +17,7 @@ _EXT_MAP = {
     "image/bmp": "bmp", "image/tiff": "tif",
 }
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 class ReleaseAction(BaseModel):
