@@ -222,7 +222,7 @@ function RequestPermissionDialog({ onshapeUrl, partName, onClose }) {
           </>
         ) : (
           <>
-            <h3 style={{ fontWeight: 700, marginBottom: 8, fontSize: 15 }}>Request Onshape Access</h3>
+            <h3 style={{ fontWeight: 700, marginBottom: 8, fontSize: 15 }}>Request Access to Part</h3>
             <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16, lineHeight: 1.5 }}>
               Enter your Onshape account email. The document owner will receive a notification and can grant you access.
             </p>
@@ -295,9 +295,9 @@ function VersionCard({ version, isLatest, part }) {
                 onMouseEnter={e => e.currentTarget.style.color = "var(--accent)"}
                 onMouseLeave={e => e.currentTarget.style.color = "var(--text)"}
               >
-                Request permission
+                Request access
               </button>
-              <span style={{ fontSize: 11, color: "var(--text-dim)" }}>of the</span>
+              <span style={{ fontSize: 11, color: "var(--text-dim)" }}>to the</span>
               <a
                 href={onshapeUrl}
                 target="_blank"
