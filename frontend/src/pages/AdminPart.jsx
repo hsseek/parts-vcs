@@ -5,9 +5,18 @@ import { api } from "../api/client";
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 const SLOTS = ["isometric", "front", "right", "top"];
 
-function ImageCard({ src, label, onReplace, onDelete }) {
+function ImageCard({ src, label, onReplace, onDelete, onRename }) {
   const [hovered, setHovered] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelValue, setLabelValue] = useState(label);
   const isEmpty = !src;
+
+  const commitRename = () => {
+    const trimmed = labelValue.trim();
+    if (trimmed && trimmed !== label) onRename(trimmed);
+    else setLabelValue(label);
+    setEditingLabel(false);
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
@@ -49,9 +58,31 @@ function ImageCard({ src, label, onReplace, onDelete }) {
           </div>
         )}
       </div>
-      <span style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--font-mono)", maxWidth: 80, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-        {label}
-      </span>
+      {onRename && editingLabel ? (
+        <input
+          value={labelValue}
+          onChange={e => setLabelValue(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={e => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") { setLabelValue(label); setEditingLabel(false); }
+          }}
+          autoFocus
+          style={{ fontSize: 9, width: 80, padding: "1px 4px", fontFamily: "var(--font-mono)", textAlign: "center" }}
+        />
+      ) : (
+        <span
+          onClick={onRename ? () => { setLabelValue(label); setEditingLabel(true); } : undefined}
+          title={onRename ? "Click to rename" : undefined}
+          style={{
+            fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--font-mono)",
+            maxWidth: 80, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap",
+            cursor: onRename ? "text" : "default",
+          }}
+        >
+          {label}
+        </span>
+      )}
     </div>
   );
 }
@@ -123,6 +154,11 @@ function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefres
     try { await api.deleteCustomImage(imageId); onRefresh(); }
     catch (err) { console.error(err); }
     finally { setUploading(false); }
+  };
+
+  const renameCustom = async (imageId, newLabel) => {
+    try { await api.renameCustomImage(imageId, newLabel); onRefresh(); }
+    catch (err) { console.error(err); }
   };
 
   const addNewImage = () => {
@@ -203,6 +239,7 @@ function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefres
                     label={img.label}
                     onReplace={() => triggerUpload({ type: "custom_replace", imageId: img.id, label: img.label })}
                     onDelete={() => deleteCustom(img.id)}
+                    onRename={(newLabel) => renameCustom(img.id, newLabel)}
                   />
                 ))}
               </div>

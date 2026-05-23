@@ -12,8 +12,15 @@ const VIEW_LABELS = {
 };
 
 function ImageGrid({ version }) {
-  const views = Object.entries(VIEW_LABELS).filter(([k]) => version[k]);
-  const [active, setActive] = useState(views[0]?.[0] ?? null);
+  const stdViews = Object.entries(VIEW_LABELS)
+    .filter(([k]) => version[k])
+    .map(([k, label]) => ({ key: k, src: version[k], label }));
+  const customViews = (version.custom_images ?? [])
+    .map(img => ({ key: `ci_${img.id}`, src: img.path, label: img.label }));
+  const views = [...stdViews, ...customViews];
+  const [activeKey, setActiveKey] = useState(views[0]?.key ?? null);
+
+  const active = views.find(v => v.key === activeKey) ?? views[0] ?? null;
 
   if (views.length === 0) {
     return (
@@ -42,8 +49,8 @@ function ImageGrid({ version }) {
         overflow: "hidden", marginBottom: 10,
       }}>
         <img
-          src={`${BASE}${version[active]}`}
-          alt={active}
+          src={`${BASE}${active.src}`}
+          alt={active.label}
           style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", padding: 12 }}
         />
       </div>
@@ -51,20 +58,20 @@ function ImageGrid({ version }) {
       {/* View tabs */}
       {views.length > 1 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {views.map(([k, label]) => (
+          {views.map(v => (
             <button
-              key={k}
-              onClick={() => setActive(k)}
+              key={v.key}
+              onClick={() => setActiveKey(v.key)}
               style={{
                 padding: "4px 12px", fontSize: 11, fontWeight: 700,
                 letterSpacing: "0.06em", textTransform: "uppercase",
-                background: active === k ? "var(--accent)" : "var(--surface2)",
-                color: active === k ? "#0f0f0f" : "var(--text-muted)",
-                border: `1px solid ${active === k ? "var(--accent)" : "var(--border)"}`,
+                background: activeKey === v.key ? "var(--accent)" : "var(--surface2)",
+                color: activeKey === v.key ? "#0f0f0f" : "var(--text-muted)",
+                border: `1px solid ${activeKey === v.key ? "var(--accent)" : "var(--border)"}`,
                 borderRadius: 4,
               }}
             >
-              {label}
+              {v.label}
             </button>
           ))}
         </div>

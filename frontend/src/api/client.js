@@ -73,5 +73,6 @@ export const api = {
   refetchImages: (versionId) => req("POST", `/api/admin/version/${versionId}/refetch-images`),
   uploadVersionImage: (versionId, formData) => upload(`/api/admin/version/${versionId}/upload-image`, formData),
   deleteVersionSlot: (versionId, slot) => req("DELETE", `/api/admin/version/${versionId}/slot/${slot}`),
+  renameCustomImage: (imageId, label) => req("PATCH", `/api/admin/image/${imageId}`, { label }),
   deleteCustomImage: (imageId) => req("DELETE", `/api/admin/image/${imageId}`),
 };

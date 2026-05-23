@@ -27,9 +27,15 @@ def list_parts():
                    (SELECT version_name FROM versions
                     WHERE part_id = p.id AND is_released = 1
                     ORDER BY released_at DESC LIMIT 1) AS latest_version,
-                   (SELECT img_isometric FROM versions
-                    WHERE part_id = p.id AND is_released = 1
-                    ORDER BY released_at DESC LIMIT 1) AS latest_thumbnail
+                   COALESCE(
+                     (SELECT img_isometric FROM versions
+                      WHERE part_id = p.id AND is_released = 1
+                      ORDER BY released_at DESC LIMIT 1),
+                     (SELECT vi.path FROM version_images vi
+                      JOIN versions vv ON vv.id = vi.version_id
+                      WHERE vv.part_id = p.id AND vv.is_released = 1
+                      ORDER BY vv.released_at DESC, vi.created_at ASC LIMIT 1)
+                   ) AS latest_thumbnail
             FROM parts p
             LEFT JOIN versions v ON v.part_id = p.id
             GROUP BY p.id

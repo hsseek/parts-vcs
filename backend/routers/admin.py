@@ -24,6 +24,10 @@ class ReleaseAction(BaseModel):
     release_notes: str = ""
 
 
+class RenameImage(BaseModel):
+    label: str
+
+
 @router.post("/release/{version_id}")
 async def admin_release(version_id: int, body: ReleaseAction, background_tasks: BackgroundTasks):
     """
@@ -190,6 +194,19 @@ def delete_slot(version_id: int, slot: str):
         if row[0]:
             (IMAGE_DIR / row[0].removeprefix("/images/")).unlink(missing_ok=True)
         conn.execute(f"UPDATE versions SET img_{slot} = NULL WHERE id = ?", (version_id,))
+    return {"ok": True}
+
+
+@router.patch("/image/{image_id}")
+def rename_custom_image(image_id: int, body: RenameImage):
+    label = body.label.strip()
+    if not label:
+        raise HTTPException(400, "Label cannot be empty")
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM version_images WHERE id = ?", (image_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Image not found")
+        conn.execute("UPDATE version_images SET label = ? WHERE id = ?", (label, image_id))
     return {"ok": True}
 
 
