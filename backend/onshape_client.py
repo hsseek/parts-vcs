@@ -10,6 +10,7 @@ import os
 import hmac
 import hashlib
 import base64
+
 import time
 import string
 import random
@@ -113,9 +114,9 @@ def get_document(did: str) -> dict:
 def list_elements(did: str, wid: str | None = None) -> list[dict] | None:
     """Return all elements in a document, or None on error."""
     path = (
-        f"/api/v6/documents/{did}/w/{wid}/elements"
+        f"/api/v6/documents/d/{did}/w/{wid}/elements"
         if wid
-        else f"/api/v6/documents/{did}/elements"
+        else f"/api/v6/documents/d/{did}/elements"
     )
     try:
         data = _get(path)
@@ -181,53 +182,3 @@ def get_thumbnail_for_version(did: str, vid: str, size: int = 300) -> bytes | No
         return None
 
 
-def get_shaded_view(
-    did: str,
-    wid: str,
-    eid: str,
-    element_type: str,  # "partstudio" or "assembly"
-    view_matrix: list[float],
-    output_height: int = 500,
-    output_width: int = 500,
-) -> bytes | None:
-    """
-    Fetch a shaded view image using workspace context (w/ instead of v/).
-    Version-based rendering returns blank images for many Part Studios.
-    view_matrix: 12-element list (rotation 3x3 + translation 3x1, row-major).
-    """
-    endpoint_map = {
-        "partstudio": "partstudios",
-        "assembly": "assemblies",
-    }
-    ep = endpoint_map.get(element_type, "partstudios")
-
-    path = f"/api/v6/{ep}/d/{did}/w/{wid}/e/{eid}/shadedviews"
-    params = {
-        "outputHeight": output_height,
-        "outputWidth": output_width,
-        "pixelSize": 0,
-        "viewMatrix": ",".join(str(x) for x in view_matrix),
-    }
-
-    try:
-        data = _get(path, params)
-        if isinstance(data, dict) and "images" in data:
-            img_b64 = data["images"][0]
-            img = base64.b64decode(img_b64)
-            # Reject blank/transparent images — real renders are significantly larger
-            if len(img) < 2000:
-                return None
-            return img
-        return None
-    except Exception as e:
-        print(f"[onshape] shaded view error for {did}/{wid}/{eid}: {e}")
-        return None
-
-
-# Standard view matrices
-VIEW_MATRICES = {
-    "isometric": [0.7071, -0.7071, 0, 0.4082, 0.4082, -0.8165, 0.5774, 0.5774, 0.5774, 0, 0, 0],
-    "front":     [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
-    "right":     [0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 0, 0],
-    "top":       [1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0],
-}

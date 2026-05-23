@@ -1,25 +1,57 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
-const SLOTS = ["isometric", "front", "right", "top"];
+const SLOTS = ["isometric"];
+const SLOT_LABELS = { isometric: "preview" };
 
-function ImageCard({ src, label, onReplace, onDelete, onRename }) {
-  const [hovered, setHovered] = useState(false);
-  const [editingLabel, setEditingLabel] = useState(false);
-  const [labelValue, setLabelValue] = useState(label);
-  const isEmpty = !src;
+function InlineEdit({ value, onChange, placeholder, style }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
 
-  const commitRename = () => {
-    const trimmed = labelValue.trim();
-    if (trimmed && trimmed !== label) onRename(trimmed);
-    else setLabelValue(label);
-    setEditingLabel(false);
+  const commit = () => {
+    if (draft !== (value ?? "")) onChange(draft);
+    setEditing(false);
   };
 
+  if (editing) {
+    return (
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") { setDraft(value ?? ""); setEditing(false); }
+        }}
+        autoFocus
+        placeholder={placeholder}
+        style={{ fontSize: 9, width: 80, padding: "1px 4px", fontFamily: "var(--font-mono)", textAlign: "center", ...style }}
+      />
+    );
+  }
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+    <span
+      onClick={() => { setDraft(value ?? ""); setEditing(true); }}
+      style={{
+        fontSize: 9, color: value ? "var(--text-dim)" : "var(--text-dim)", fontFamily: "var(--font-mono)",
+        maxWidth: 80, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap",
+        cursor: "text", fontStyle: value ? "normal" : "italic", opacity: value ? 1 : 0.5,
+        ...style,
+      }}
+    >
+      {value || placeholder}
+    </span>
+  );
+}
+
+function ImageCard({ src, label, caption, onReplace, onDelete, onRename, onCaptionChange }) {
+  const [hovered, setHovered] = useState(false);
+  const isEmpty = !src;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
       <div
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -58,30 +90,12 @@ function ImageCard({ src, label, onReplace, onDelete, onRename }) {
           </div>
         )}
       </div>
-      {onRename && editingLabel ? (
-        <input
-          value={labelValue}
-          onChange={e => setLabelValue(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={e => {
-            if (e.key === "Enter") commitRename();
-            if (e.key === "Escape") { setLabelValue(label); setEditingLabel(false); }
-          }}
-          autoFocus
-          style={{ fontSize: 9, width: 80, padding: "1px 4px", fontFamily: "var(--font-mono)", textAlign: "center" }}
-        />
-      ) : (
-        <span
-          onClick={onRename ? () => { setLabelValue(label); setEditingLabel(true); } : undefined}
-          title={onRename ? "Click to rename" : undefined}
-          style={{
-            fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--font-mono)",
-            maxWidth: 80, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap",
-            cursor: onRename ? "text" : "default",
-          }}
-        >
-          {label}
-        </span>
+      {onRename
+        ? <InlineEdit value={label} onChange={onRename} placeholder="label" />
+        : <span style={{ fontSize: 9, color: "var(--text-dim)", fontFamily: "var(--font-mono)", maxWidth: 80, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{label}</span>
+      }
+      {onCaptionChange && (
+        <InlineEdit value={caption} onChange={onCaptionChange} placeholder="caption…" style={{ color: "var(--text-dim)", opacity: 0.7 }} />
       )}
     </div>
   );
@@ -161,6 +175,16 @@ function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefres
     catch (err) { console.error(err); }
   };
 
+  const updateSlotCaption = async (slot, caption) => {
+    try { await api.updateSlotCaption(version.id, slot, caption); onRefresh(); }
+    catch (err) { console.error(err); }
+  };
+
+  const updateCustomCaption = async (imageId, caption) => {
+    try { await api.updateCustomImageCaption(imageId, caption); onRefresh(); }
+    catch (err) { console.error(err); }
+  };
+
   const addNewImage = () => {
     const defaultLabel = `Image ${(version.custom_images?.length ?? 0) + 1}`;
     triggerUpload({ type: "new", label: newLabel.trim() || defaultLabel });
@@ -168,14 +192,40 @@ function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefres
     setNewLabel("");
   };
 
+  const handlePaste = useCallback(async (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItem = items.find(item => item.type.startsWith("image/"));
+    if (!imageItem) return;
+    e.preventDefault();
+    const file = imageItem.getAsFile();
+    if (!file) return;
+    const defaultLabel = `Image ${(version.custom_images?.length ?? 0) + 1}`;
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("label", defaultLabel);
+    setUploading(true);
+    try {
+      await api.uploadVersionImage(version.id, fd);
+      onRefresh();
+    } catch (err) {
+      console.error("Paste upload failed:", err);
+    } finally {
+      setUploading(false);
+    }
+  }, [version.id, version.custom_images, onRefresh]);
+
   return (
-    <div style={{
-      background: "var(--surface)",
-      border: `1px solid ${version.is_released ? "rgba(78,222,128,0.3)" : "var(--border)"}`,
-      borderRadius: 8, padding: "16px 20px",
-      display: "grid", gridTemplateColumns: "1fr auto",
-      gap: 16, alignItems: "start",
-    }}>
+    <div
+      onPaste={handlePaste}
+      style={{
+        background: "var(--surface)",
+        border: `1px solid ${version.is_released ? "rgba(78,222,128,0.3)" : "var(--border)"}`,
+        borderRadius: 8, padding: "16px 20px",
+        display: "grid", gridTemplateColumns: "1fr auto",
+        gap: 16, alignItems: "start",
+      }}
+    >
       <input
         ref={fileInputRef}
         type="file"
@@ -195,12 +245,6 @@ function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefres
             ? <span className="tag tag-released">Released</span>
             : <span className="tag">Pending</span>
           }
-          {version.is_released && !version.images_fetched && (
-            <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5, marginRight: 5 }} />
-              fetching images…
-            </span>
-          )}
           {version.is_released && version.images_fetched && (
             <button
               onClick={handleRefetch}
@@ -214,70 +258,78 @@ function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefres
         </div>
 
         {/* Images */}
-        {version.is_released && (
-          <div style={{ marginBottom: 12 }}>
-            {/* Standard slots */}
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-              {SLOTS.map(slot => (
-                <ImageCard
-                  key={slot}
-                  src={version[`img_${slot}`]}
-                  label={slot}
-                  onReplace={() => triggerUpload({ type: "slot", slot })}
-                  onDelete={() => deleteSlot(slot)}
-                />
-              ))}
+        <div style={{ marginBottom: 12 }}>
+          {!version.images_fetched && (
+            <div style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)", marginBottom: 8 }}>
+              <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5, marginRight: 5 }} />
+              fetching images…
             </div>
+          )}
 
-            {/* Custom images */}
-            {version.custom_images?.length > 0 && (
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-                {version.custom_images.map(img => (
-                  <ImageCard
-                    key={img.id}
-                    src={img.path}
-                    label={img.label}
-                    onReplace={() => triggerUpload({ type: "custom_replace", imageId: img.id, label: img.label })}
-                    onDelete={() => deleteCustom(img.id)}
-                    onRename={(newLabel) => renameCustom(img.id, newLabel)}
-                  />
-                ))}
-              </div>
-            )}
+          {/* All images in one row */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            {SLOTS.map(slot => (
+              <ImageCard
+                key={slot}
+                src={version[`img_${slot}`]}
+                label={SLOT_LABELS[slot] ?? slot}
+                caption={version[`img_${slot}_caption`]}
+                onReplace={() => triggerUpload({ type: "slot", slot })}
+                onDelete={() => deleteSlot(slot)}
+                onCaptionChange={version[`img_${slot}`] ? (c) => updateSlotCaption(slot, c) : undefined}
+              />
+            ))}
+            {version.custom_images?.map(img => (
+              <ImageCard
+                key={img.id}
+                src={img.path}
+                label={img.label}
+                caption={img.caption}
+                onReplace={() => triggerUpload({ type: "custom_replace", imageId: img.id, label: img.label })}
+                onDelete={() => deleteCustom(img.id)}
+                onRename={(newLabel) => renameCustom(img.id, newLabel)}
+                onCaptionChange={(c) => updateCustomCaption(img.id, c)}
+              />
+            ))}
+          </div>
 
-            {/* Add image */}
-            {showAddForm ? (
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
-                <input
-                  value={newLabel}
-                  onChange={e => setNewLabel(e.target.value)}
-                  placeholder={`Image ${(version.custom_images?.length ?? 0) + 1}`}
-                  style={{ width: 160, fontSize: 12, padding: "5px 8px" }}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") addNewImage();
-                    if (e.key === "Escape") { setShowAddForm(false); setNewLabel(""); }
-                  }}
-                  autoFocus
-                />
-                <button className="btn-primary" onClick={addNewImage} style={{ fontSize: 12, padding: "5px 12px" }}>
-                  Choose file
-                </button>
-                <button className="btn-ghost" onClick={() => { setShowAddForm(false); setNewLabel(""); }} style={{ fontSize: 12, padding: "5px 12px" }}>
-                  Cancel
-                </button>
-              </div>
-            ) : (
+          {/* Add image */}
+          {showAddForm ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+              <input
+                value={newLabel}
+                onChange={e => setNewLabel(e.target.value)}
+                placeholder={`Image ${(version.custom_images?.length ?? 0) + 1}`}
+                style={{ width: 160, fontSize: 12, padding: "5px 8px" }}
+                onKeyDown={e => {
+                  if (e.key === "Enter") addNewImage();
+                  if (e.key === "Escape") { setShowAddForm(false); setNewLabel(""); }
+                }}
+                autoFocus
+              />
+              <button className="btn-primary" onClick={addNewImage} style={{ fontSize: 12, padding: "5px 12px" }}>
+                Choose file
+              </button>
+              <button className="btn-ghost" onClick={() => { setShowAddForm(false); setNewLabel(""); }} style={{ fontSize: 12, padding: "5px 12px" }}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 2 }}>
               <button
                 className="btn-ghost"
                 onClick={() => setShowAddForm(true)}
                 disabled={uploading}
-                style={{ fontSize: 11, padding: "4px 10px", marginTop: 2 }}
+                style={{ fontSize: 11, padding: "4px 10px" }}
               >
                 + Add image
               </button>
-            )}
-          </div>
-        )}
+              <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                or Ctrl+V to paste
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Release notes */}
         {version.is_released && (
@@ -337,6 +389,7 @@ function VersionRow({ version, onRelease, onUnrelease, onRefetchImages, onRefres
 
 export default function AdminPart() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [part, setPart] = useState(null);
   const [versions, setVersions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -346,6 +399,8 @@ export default function AdminPart() {
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState("");
   const [savingName, setSavingName] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -362,7 +417,7 @@ export default function AdminPart() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    const pending = versions.some(v => v.is_released && !v.images_fetched);
+    const pending = versions.some(v => !v.images_fetched);
     if (!pending) return;
     const timer = setInterval(load, 4000);
     return () => clearInterval(timer);
@@ -399,6 +454,18 @@ export default function AdminPart() {
   const onUnrelease = async (versionId) => { await api.unrelease(versionId); await load(); };
   const onRefetchImages = async (versionId) => { await api.refetchImages(versionId); await load(); };
 
+  const deletePart = async () => {
+    setDeleting(true);
+    try {
+      await api.deletePart(id);
+      navigate("/admin");
+    } catch (e) {
+      setError(e.message);
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
+
   if (loading) return <div style={{ padding: 40, color: "var(--text-muted)" }}><span className="spinner" /> Loading…</div>;
   if (error) return <div style={{ padding: 40 }}><div className="error-msg">{error}</div></div>;
   if (!part) return null;
@@ -410,9 +477,7 @@ export default function AdminPart() {
     <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px 20px" }}>
       {/* Breadcrumb */}
       <div style={{ marginBottom: 20, fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-        <Link to="/admin" style={{ color: "var(--text-muted)" }}>Admin</Link>
-        <span> / </span>
-        <span style={{ color: "var(--text)" }}>{part.name}</span>
+        <Link to="/admin" style={{ color: "var(--text-muted)" }}>← Admin</Link>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
@@ -450,13 +515,28 @@ export default function AdminPart() {
             <p style={{ color: "var(--text-muted)", fontSize: 13 }}>{part.description}</p>
           )}
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <Link to={`/part/${id}`} className="btn-ghost" style={{ display: "inline-flex", alignItems: "center", padding: "8px 16px" }}>
             Preview ↗
           </Link>
           <button className="btn-primary" onClick={sync} disabled={syncing}>
             {syncing ? <><span className="spinner" /> Syncing…</> : "↺ Sync from Onshape"}
           </button>
+          {confirmDelete ? (
+            <>
+              <span style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>Delete this part?</span>
+              <button className="btn-danger" onClick={deletePart} disabled={deleting}>
+                {deleting ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button className="btn-ghost" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button className="btn-danger" onClick={() => setConfirmDelete(true)} style={{ opacity: 0.7 }}>
+              Delete
+            </button>
+          )}
         </div>
       </div>
 
@@ -468,12 +548,23 @@ export default function AdminPart() {
         }}>{syncMsg}</div>
       )}
 
-      <div style={{
-        background: "var(--surface2)", border: "1px solid var(--border)",
-        borderRadius: 6, padding: "10px 14px", marginBottom: 28,
-        fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", wordBreak: "break-all",
-      }}>
-        doc: {part.onshape_document_id} · element: {part.onshape_element_id} · type: {part.onshape_element_type}
+      <div style={{ marginBottom: 28 }}>
+        <a
+          href={`https://cad.onshape.com/documents/${part.onshape_document_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-muted)",
+            textDecoration: "none", border: "1px solid var(--border)",
+            borderRadius: 5, padding: "5px 12px",
+            transition: "border-color 0.15s, color 0.15s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--accent)"; e.currentTarget.style.color = "var(--accent)"; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          ↗ Open in Onshape
+        </a>
       </div>
 
       {/* Pending versions */}

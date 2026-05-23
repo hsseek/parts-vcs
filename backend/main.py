@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
-from database import init_db
-from routers import parts, versions, admin, onshape_sync, auth_router
+from database import init_db, migrate_db
+from routers import parts, versions, admin, onshape_sync, auth_router, request_access
 
 app = FastAPI(title="PartVCS", version="1.0.0")
 
@@ -26,12 +26,14 @@ Path("static/images").mkdir(parents=True, exist_ok=True)
 @app.on_event("startup")
 async def startup():
     init_db()
+    migrate_db()
 
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(parts.router, prefix="/api/parts", tags=["parts"])
 app.include_router(versions.router, prefix="/api/versions", tags=["versions"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(onshape_sync.router, prefix="/api/sync", tags=["sync"])
+app.include_router(request_access.router, prefix="/api", tags=["access"])
 
 app.mount("/images", StaticFiles(directory="static/images"), name="images")
 

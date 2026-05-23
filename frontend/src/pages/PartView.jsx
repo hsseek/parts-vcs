@@ -4,19 +4,18 @@ import { api } from "../api/client";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
+const ONSHAPE_BASE = "https://cad.onshape.com";
+
 const VIEW_LABELS = {
-  img_isometric: "Isometric",
-  img_front: "Front",
-  img_right: "Right",
-  img_top: "Top",
+  img_isometric: "Preview",
 };
 
 function ImageGrid({ version }) {
   const stdViews = Object.entries(VIEW_LABELS)
     .filter(([k]) => version[k])
-    .map(([k, label]) => ({ key: k, src: version[k], label }));
+    .map(([k, label]) => ({ key: k, src: version[k], label, caption: version[`${k}_caption`] ?? null }));
   const customViews = (version.custom_images ?? [])
-    .map(img => ({ key: `ci_${img.id}`, src: img.path, label: img.label }));
+    .map(img => ({ key: `ci_${img.id}`, src: img.path, label: img.label, caption: img.caption ?? null }));
   const views = [...stdViews, ...customViews];
   const [activeKey, setActiveKey] = useState(views[0]?.key ?? null);
 
@@ -55,6 +54,16 @@ function ImageGrid({ version }) {
         />
       </div>
 
+      {active?.caption && (
+        <div style={{
+          marginTop: 8, marginBottom: 6,
+          fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5,
+          padding: "6px 10px", background: "var(--surface2)", borderRadius: 5,
+        }}>
+          {active.caption}
+        </div>
+      )}
+
       {/* View tabs */}
       {views.length > 1 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -80,7 +89,72 @@ function ImageGrid({ version }) {
   );
 }
 
-function VersionCard({ version, isLatest }) {
+function RequestPermissionDialog({ onshapeUrl, partName, onClose }) {
+  const [account, setAccount] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const send = async () => {
+    if (!account.trim()) return;
+    setSending(true); setErr(null);
+    try {
+      await api.requestAccess({ onshape_account: account.trim(), onshape_url: onshapeUrl, part_name: partName });
+      setSent(true);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: 28, width: "min(400px, 90vw)" }}>
+        {sent ? (
+          <>
+            <p style={{ color: "var(--green)", marginBottom: 16, fontSize: 14 }}>
+              Request sent. The document owner will be notified.
+            </p>
+            <button className="btn-ghost" onClick={onClose}>Close</button>
+          </>
+        ) : (
+          <>
+            <h3 style={{ fontWeight: 700, marginBottom: 8, fontSize: 15 }}>Request Onshape Access</h3>
+            <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16, lineHeight: 1.5 }}>
+              Enter your Onshape account email. The document owner will receive a notification and can grant you access.
+            </p>
+            <input
+              value={account}
+              onChange={e => setAccount(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && send()}
+              placeholder="your@onshape-account.com"
+              style={{ width: "100%", marginBottom: 12, boxSizing: "border-box" }}
+              autoFocus
+            />
+            {err && <div className="error-msg" style={{ marginBottom: 12 }}>{err}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn-primary" onClick={send} disabled={sending || !account.trim()}>
+                {sending ? "Sending…" : "Send Request"}
+              </button>
+              <button className="btn-ghost" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VersionCard({ version, isLatest, part }) {
+  const [showRequest, setShowRequest] = useState(false);
+  const onshapeUrl = part
+    ? `${ONSHAPE_BASE}/documents/${part.onshape_document_id}/v/${version.onshape_version_id}/e/${part.onshape_element_id}`
+    : null;
+
   return (
     <div style={{
       border: `1px solid ${isLatest ? "var(--accent)" : "var(--border)"}`,
@@ -98,7 +172,7 @@ function VersionCard({ version, isLatest }) {
         }}>Current</div>
       )}
       <div style={{ padding: 20 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
           <span style={{
             fontFamily: "var(--font-mono)", fontSize: 20, fontWeight: 700,
             color: isLatest ? "var(--accent)" : "var(--text)",
@@ -110,6 +184,43 @@ function VersionCard({ version, isLatest }) {
                 })
               : "—"}
           </span>
+          {onshapeUrl && (
+            <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+              <button
+                onClick={() => setShowRequest(true)}
+                style={{
+                  background: "none", border: "none", padding: 0, cursor: "pointer",
+                  fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: "normal",
+                  color: "var(--text)", textDecoration: "underline", textDecorationColor: "var(--border)",
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = "var(--accent)"}
+                onMouseLeave={e => e.currentTarget.style.color = "var(--text)"}
+              >
+                Request permission
+              </button>
+              <span style={{ fontSize: 11, color: "var(--text-dim)" }}>of the</span>
+              <a
+                href={onshapeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text)",
+                  textDecoration: "underline", textDecorationColor: "var(--border)",
+                }}
+                onMouseEnter={e => e.currentTarget.style.color = "var(--accent)"}
+                onMouseLeave={e => e.currentTarget.style.color = "var(--text)"}
+              >
+                part ↗
+              </a>
+            </span>
+          )}
+          {showRequest && (
+            <RequestPermissionDialog
+              onshapeUrl={onshapeUrl}
+              partName={part?.name ?? ""}
+              onClose={() => setShowRequest(false)}
+            />
+          )}
         </div>
 
         <ImageGrid version={version} />
@@ -189,7 +300,7 @@ export default function PartView() {
                 fontSize: 11, fontWeight: 700, letterSpacing: "0.1em",
                 textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 12,
               }}>Current Approved Version</div>
-              <VersionCard version={latest} isLatest={true} />
+              <VersionCard version={latest} isLatest={true} part={part} />
             </div>
           )}
 
@@ -207,7 +318,7 @@ export default function PartView() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {older.map((v) => (
-                  <VersionCard key={v.id} version={v} isLatest={false} />
+                  <VersionCard key={v.id} version={v} isLatest={false} part={part} />
                 ))}
               </div>
             </div>

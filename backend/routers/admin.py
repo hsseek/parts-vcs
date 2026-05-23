@@ -8,8 +8,9 @@ from pydantic import BaseModel
 from database import get_db
 from routers.onshape_sync import fetch_images_for_version, IMAGE_DIR
 from auth import require_admin
+import onshape_client as oc
 
-VALID_SLOTS = {"isometric", "front", "right", "top"}
+VALID_SLOTS = {"isometric"}
 
 _EXT_MAP = {
     "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
@@ -20,12 +21,27 @@ _EXT_MAP = {
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 
+@router.get("/status")
+def check_status():
+    """Check Onshape API connectivity by making a lightweight test call."""
+    try:
+        oc.list_documents(limit=1)
+        return {"onshape": True}
+    except Exception as e:
+        return {"onshape": False, "error": str(e)}
+
+
 class ReleaseAction(BaseModel):
     release_notes: str = ""
 
 
-class RenameImage(BaseModel):
-    label: str
+class UpdateImage(BaseModel):
+    label: str | None = None
+    caption: str | None = None
+
+
+class UpdateCaption(BaseModel):
+    caption: str
 
 
 @router.post("/release/{version_id}")
@@ -77,19 +93,19 @@ def admin_unrelease(version_id: int):
 
 @router.post("/version/{version_id}/refetch-images")
 async def refetch_images(version_id: int, background_tasks: BackgroundTasks):
-    """Reset image state for a released version and re-trigger the background fetch."""
+    """Reset image state for a version and re-trigger the background fetch."""
     with get_db() as conn:
         row = conn.execute(
             """SELECT v.*, p.onshape_document_id, p.onshape_element_id, p.onshape_element_type
                FROM versions v JOIN parts p ON p.id = v.part_id
-               WHERE v.id = ? AND v.is_released = 1""",
+               WHERE v.id = ?""",
             (version_id,),
         ).fetchone()
         if not row:
-            raise HTTPException(404, "Released version not found")
+            raise HTTPException(404, "Version not found")
 
         # Delete stale image files from disk
-        for col in ("img_isometric", "img_front", "img_right", "img_top"):
+        for col in ("img_isometric",):
             path_str = row[col]
             if path_str:
                 filename = path_str.removeprefix("/images/")
@@ -97,10 +113,7 @@ async def refetch_images(version_id: int, background_tasks: BackgroundTasks):
                 stale.unlink(missing_ok=True)
 
         conn.execute(
-            """UPDATE versions SET images_fetched = 0,
-               img_isometric = NULL, img_front = NULL,
-               img_right = NULL, img_top = NULL
-               WHERE id = ?""",
+            "UPDATE versions SET images_fetched = 0, img_isometric = NULL WHERE id = ?",
             (version_id,),
         )
 
@@ -197,16 +210,31 @@ def delete_slot(version_id: int, slot: str):
     return {"ok": True}
 
 
-@router.patch("/image/{image_id}")
-def rename_custom_image(image_id: int, body: RenameImage):
-    label = body.label.strip()
-    if not label:
-        raise HTTPException(400, "Label cannot be empty")
+@router.patch("/version/{version_id}/slot/{slot}/caption")
+def update_slot_caption(version_id: int, slot: str, body: UpdateCaption):
+    if slot not in VALID_SLOTS:
+        raise HTTPException(400, f"Invalid slot. Must be one of: {', '.join(sorted(VALID_SLOTS))}")
     with get_db() as conn:
-        row = conn.execute("SELECT id FROM version_images WHERE id = ?", (image_id,)).fetchone()
-        if not row:
+        if not conn.execute("SELECT id FROM versions WHERE id = ?", (version_id,)).fetchone():
+            raise HTTPException(404, "Version not found")
+        conn.execute(f"UPDATE versions SET img_{slot}_caption = ? WHERE id = ?", (body.caption, version_id))
+    return {"ok": True}
+
+
+@router.patch("/image/{image_id}")
+def update_custom_image(image_id: int, body: UpdateImage):
+    if body.label is None and body.caption is None:
+        raise HTTPException(400, "Nothing to update")
+    with get_db() as conn:
+        if not conn.execute("SELECT id FROM version_images WHERE id = ?", (image_id,)).fetchone():
             raise HTTPException(404, "Image not found")
-        conn.execute("UPDATE version_images SET label = ? WHERE id = ?", (label, image_id))
+        if body.label is not None:
+            label = body.label.strip()
+            if not label:
+                raise HTTPException(400, "Label cannot be empty")
+            conn.execute("UPDATE version_images SET label = ? WHERE id = ?", (label, image_id))
+        if body.caption is not None:
+            conn.execute("UPDATE version_images SET caption = ? WHERE id = ?", (body.caption, image_id))
     return {"ok": True}
 
 

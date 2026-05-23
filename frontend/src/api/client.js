@@ -46,6 +46,10 @@ export const api = {
   // Auth
   login: (passphrase) => req("POST", "/api/auth/login", { passphrase }),
   checkAuth: () => req("GET", "/api/auth/check"),
+  checkStatus: () => req("GET", "/api/admin/status"),
+
+  // Access requests (public)
+  requestAccess: (data) => req("POST", "/api/request-access", data),
 
   // Parts
   listParts: () => req("GET", "/api/parts"),
@@ -74,5 +78,7 @@ export const api = {
   uploadVersionImage: (versionId, formData) => upload(`/api/admin/version/${versionId}/upload-image`, formData),
   deleteVersionSlot: (versionId, slot) => req("DELETE", `/api/admin/version/${versionId}/slot/${slot}`),
   renameCustomImage: (imageId, label) => req("PATCH", `/api/admin/image/${imageId}`, { label }),
+  updateCustomImageCaption: (imageId, caption) => req("PATCH", `/api/admin/image/${imageId}`, { caption }),
+  updateSlotCaption: (versionId, slot, caption) => req("PATCH", `/api/admin/version/${versionId}/slot/${slot}/caption`, { caption }),
   deleteCustomImage: (imageId) => req("DELETE", `/api/admin/image/${imageId}`),
 };

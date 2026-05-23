@@ -26,39 +26,19 @@ def _save_image(data: bytes, prefix: str) -> str:
 
 
 def fetch_images_for_version(version_db_id: int, did: str, vid: str, eid: str, element_type: str):
-    """Background task: fetch all 4 shaded views and thumbnail, save, update DB."""
-    images = {}
-
-    # Resolve the default workspace ID — shaded views work in workspace context,
-    # not version context (version-based rendering returns blank images).
-    doc = oc.get_document(did)
-    wid = doc.get("defaultWorkspace", {}).get("id", "")
-
-    if wid:
-        for view_name, matrix in oc.VIEW_MATRICES.items():
-            img = oc.get_shaded_view(did, wid, eid, element_type, matrix)
-            if img:
-                images[f"img_{view_name}"] = _save_image(img, f"{version_db_id}_{view_name}")
-
-    # Fallback: thumbnail when shaded views are all blank or workspace unavailable
-    if not images:
-        thumb = oc.get_thumbnail_for_version(did, vid)
-        if thumb:
-            images["img_isometric"] = _save_image(thumb, f"{version_db_id}_thumb")
-
-    if not images:
-        print(f"[sync] No images fetched for version db_id={version_db_id}")
+    """Background task: fetch document thumbnail, save, update DB."""
+    thumb = oc.get_thumbnail_for_version(did, vid)
+    if not thumb:
+        print(f"[sync] No thumbnail fetched for version db_id={version_db_id}")
         return
 
-    set_clause = ", ".join(f"{k} = ?" for k in images)
-    values = list(images.values()) + [version_db_id]
-
+    path = _save_image(thumb, f"{version_db_id}_thumb")
     with get_db() as conn:
         conn.execute(
-            f"UPDATE versions SET {set_clause}, images_fetched = 1 WHERE id = ?",
-            values,
+            "UPDATE versions SET img_isometric = ?, images_fetched = 1 WHERE id = ?",
+            (path, version_db_id),
         )
-    print(f"[sync] Images saved for version db_id={version_db_id}: {list(images.keys())}")
+    print(f"[sync] Thumbnail saved for version db_id={version_db_id}: {path}")
 
 
 @router.post("/part/{part_id}")
@@ -145,7 +125,7 @@ def discover_by_url(url: str):
     doc = oc.get_document(did)
     doc_name = doc.get("name", did)
 
-    elements = oc.list_elements(did)
+    elements = oc.list_elements(did, wid)
     if elements is None:
         raise HTTPException(403, "Could not access document elements. Check that your Onshape API key has access to this document.")
 
@@ -228,18 +208,41 @@ class ImportItem(BaseModel):
 
 
 @router.post("/import")
-def import_parts(items: list[ImportItem]):
-    """Create parts from a list of discovered elements."""
+async def import_parts(items: list[ImportItem], background_tasks: BackgroundTasks):
+    """Create parts, auto-discover CalVer versions, and queue image fetches."""
     created = 0
-    with get_db() as conn:
-        for item in items:
-            conn.execute(
+    versions_found = 0
+    for item in items:
+        try:
+            calver_versions = oc.list_calver_versions(item.document_id)
+        except Exception:
+            calver_versions = []
+
+        version_jobs = []
+        with get_db() as conn:
+            cur = conn.execute(
                 """INSERT INTO parts (name, description, onshape_document_id, onshape_element_id, onshape_element_type)
                    VALUES (?, ?, ?, ?, ?)""",
                 (item.name, item.description, item.document_id, item.element_id, item.element_type),
             )
-            created += 1
-    return {"created": created}
+            part_id = cur.lastrowid
+            for v in calver_versions:
+                try:
+                    cur2 = conn.execute(
+                        """INSERT INTO versions (part_id, onshape_version_id, version_name)
+                           VALUES (?, ?, ?)""",
+                        (part_id, v["id"], v["name"]),
+                    )
+                    version_jobs.append((cur2.lastrowid, item.document_id, v["id"], item.element_id, item.element_type))
+                except Exception:
+                    pass
+
+        for job in version_jobs:
+            background_tasks.add_task(fetch_images_for_version, *job)
+        versions_found += len(version_jobs)
+        created += 1
+
+    return {"created": created, "versions_found": versions_found}
 
 
 @router.post("/all")
